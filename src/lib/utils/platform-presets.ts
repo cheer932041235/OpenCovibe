@@ -112,10 +112,22 @@ export const PLATFORM_PRESETS: PlatformPreset[] = [
     name: "Xiaomi MiMo (\u5c0f\u7c73)",
     base_url: "https://api.xiaomimimo.com/anthropic",
     auth_env_var: "ANTHROPIC_AUTH_TOKEN",
-    description: "Xiaomi AI",
+    description: "Xiaomi AI \u2014 pay-as-you-go",
     key_placeholder: "your-mimo-key",
     category: "provider",
     models: ["mimo-v2-flash"],
+    docs_url: "https://platform.xiaomimimo.com/docs/zh-CN/integration/claudecode",
+  },
+  {
+    id: "mimo-tp",
+    name: "Xiaomi MiMo (Token Plan)",
+    base_url: "https://token-plan-cn.xiaomimimo.com/anthropic",
+    auth_env_var: "ANTHROPIC_AUTH_TOKEN",
+    description: "Xiaomi subscription plan",
+    key_placeholder: "tp-xxxxx",
+    category: "provider",
+    models: ["mimo-v2.5-pro"],
+    docs_url: "https://platform.xiaomimimo.com/docs/zh-CN/integration/claudecode",
   },
 
   // ── API Proxy ──

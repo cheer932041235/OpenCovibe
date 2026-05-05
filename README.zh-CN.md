@@ -162,6 +162,7 @@ npm run tauri dev
 | MiniMax | `api.minimax.io/anthropic` | Bearer |
 | MiniMax（中国） | `api.minimaxi.com/anthropic` | Bearer |
 | 小米 MiMo | `api.xiaomimimo.com/anthropic` | Bearer |
+| 小米 MiMo（订阅 Token Plan） | `token-plan-cn.xiaomimimo.com/anthropic` | Bearer |
 
 ### API 代理
 
