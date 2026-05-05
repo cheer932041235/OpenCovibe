@@ -163,6 +163,13 @@ fn known_provider_defaults(pid: &str) -> Option<ProviderDefaults> {
             key_optional: false,
             auth_env_var: None,
         }),
+        "mimo-tp" => Some(ProviderDefaults {
+            base_url: Some("https://token-plan-cn.xiaomimimo.com/anthropic"),
+            models: Some(vec!["mimo-v2.5-pro".to_string()]),
+            extra_env: None,
+            key_optional: false,
+            auth_env_var: None,
+        }),
         "openrouter" => Some(ProviderDefaults {
             base_url: Some("https://openrouter.ai/api"),
             models: None,

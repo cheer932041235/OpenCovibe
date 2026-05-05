@@ -162,6 +162,7 @@ You can re-run the wizard anytime from **Settings > General > Setup Wizard**.
 | MiniMax | `api.minimax.io/anthropic` | Bearer |
 | MiniMax (China) | `api.minimaxi.com/anthropic` | Bearer |
 | Xiaomi MiMo (小米) | `api.xiaomimimo.com/anthropic` | Bearer |
+| Xiaomi MiMo (Token Plan) | `token-plan-cn.xiaomimimo.com/anthropic` | Bearer |
 
 ### API Gateway
 

@@ -434,6 +434,7 @@ pub(crate) fn preset_name(pid: &str) -> String {
         "minimax" => "MiniMax",
         "minimax-cn" => "MiniMax (China)",
         "mimo" => "Xiaomi MiMo (小米)",
+        "mimo-tp" => "Xiaomi MiMo (Token Plan)",
         "vercel" => "Vercel AI Gateway",
         "openrouter" => "OpenRouter",
         "siliconflow" => "SiliconFlow (硅基流动)",
