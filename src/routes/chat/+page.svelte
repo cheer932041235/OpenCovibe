@@ -49,6 +49,7 @@
   import SessionStatusBar from "$lib/components/SessionStatusBar.svelte";
   import McpStatusPanel from "$lib/components/McpStatusPanel.svelte";
   import PromptInput from "$lib/components/PromptInput.svelte";
+  import ScheduledTasksChip from "$lib/components/ScheduledTasksChip.svelte";
   import PermissionPanel from "$lib/components/PermissionPanel.svelte";
   import ElicitationDialog from "$lib/components/ElicitationDialog.svelte";
   import AuthSourceBadge from "$lib/components/AuthSourceBadge.svelte";
@@ -4859,6 +4860,13 @@
         </div>
       </div>
     {/if}
+
+    <ScheduledTasksChip
+      tasks={store.scheduledTasks}
+      busy={store.isRunning}
+      onCancel={(id) => store.sendMessage(`Cancel scheduled task ${id}`, [])}
+      onList={() => store.sendMessage("Show me my scheduled tasks", [])}
+    />
 
     {#if store.sessionAlive || !store.run || store.phase === "empty" || store.phase === "ready" || TERMINAL_PHASES.includes(store.phase)}
       <PromptInput

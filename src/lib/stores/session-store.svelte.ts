@@ -127,6 +127,13 @@ interface ReduceCtx {
   toolTlIndex: Map<string, number>;
   /** tool_use_id → he[] index (only HookEvent entries with tool_use_id). */
   toolHeIndex: Map<string, number>;
+  /** tool_use_id → tool_start.input. Populated in tool_start branch so
+   *  tool_end branches in the same batch can join without waiting for commit. */
+  toolInputByUseId: Map<string, Record<string, unknown>>;
+  /** Local scheduled-task accumulator. Snapshotted from store at ctx
+   *  creation; only committed in _commitReduceCtx. Keeps async replay
+   *  stale-safe (mid-batch abort doesn't pollute live store). */
+  scheduledTasks: ScheduledTask[];
 }
 
 // ── Helpers ──
@@ -174,6 +181,19 @@ export interface TaskNotificationItem {
   task_type?: string;
   summary?: string;
   tool_use_id?: string;
+}
+
+/** Scheduled task created via CronCreate (CLI /loop infrastructure).
+ *  prompt/cron are best-effort: only available when the matching tool_start
+ *  input is present in the same batch or snapshot. */
+export interface ScheduledTask {
+  id: string;
+  humanSchedule: string;
+  recurring: boolean;
+  durable: boolean;
+  prompt?: string;
+  cron?: string;
+  toolUseId: string;
 }
 
 // ── Store ──
@@ -234,6 +254,10 @@ export class SessionStore {
     startedAt: string;
     reason: import("$lib/types").RalphCompleteReason | "interrupted" | null;
   } | null>(null);
+
+  /** Scheduled tasks created via CronCreate. Updated by tool_end reducer
+   *  branches; replayed via snapshot. UI lives in ScheduledTasksChip.svelte. */
+  scheduledTasks = $state<ScheduledTask[]>([]);
 
   /** CLI slash commands from session_init (session-specific, includes custom commands). */
   sessionCommands = $state<CliCommand[]>([]);
@@ -770,6 +794,26 @@ export class SessionStore {
     return this._findToolIdx(ctx, parentToolUseId);
   }
 
+  /** Lookup the tool_start input for a given tool_use_id. Used by tool_end
+   *  branches (e.g. CronCreate) to join with the originating input.
+   *  Order: ctx batch map → ctx.tl → live timeline (covers live applyEvent path). */
+  private _lookupToolStartInput(
+    ctx: ReduceCtx | null,
+    toolUseId: string,
+  ): Record<string, unknown> | undefined {
+    if (ctx) {
+      const fromMap = ctx.toolInputByUseId.get(toolUseId);
+      if (fromMap) return fromMap;
+    }
+    const tl = ctx?.tl ?? this.timeline;
+    const idx = this._findToolIdx(ctx, toolUseId);
+    if (idx >= 0) {
+      const e = tl[idx];
+      if (e.kind === "tool") return e.tool.input as Record<string, unknown> | undefined;
+    }
+    return undefined;
+  }
+
   /** Search ALL subTimelines (one level deep) for a tool with the given id.
    *  Used when parent_tool_use_id is missing but the tool exists in a subTimeline.
    *  Returns true if found and updated; false if not found. */
@@ -1040,6 +1084,8 @@ export class SessionStore {
       turnUsages: [...this.turnUsages],
       toolTlIndex: batchTlIndex,
       toolHeIndex: batchHeIndex,
+      toolInputByUseId: new Map<string, Record<string, unknown>>(),
+      scheduledTasks: [...this.scheduledTasks],
     };
   }
 
@@ -1085,6 +1131,7 @@ export class SessionStore {
     this._seenToolIds = ctx.seenToolIds;
     this._toolTlIndex = ctx.toolTlIndex;
     this._toolHeIndex = ctx.toolHeIndex;
+    this.scheduledTasks = ctx.scheduledTasks;
     if (!replayOnly) {
       this._setPhase(ctx.phase);
       this.error = ctx.error;
@@ -1262,6 +1309,7 @@ export class SessionStore {
     this.pendingElicitations = new Map();
     this.persistedFiles = [];
     this.ralphLoop = null;
+    this.scheduledTasks = [];
     this.sessionCommands = [];
     this.mcpServers = [];
     this.cliVersion = "";
@@ -1371,6 +1419,7 @@ export class SessionStore {
       unknownEventCount: this.unknownEventCount,
       rawFallbackCount: this.rawFallbackCount,
       taskNotifications: [...this.taskNotifications.entries()],
+      scheduledTasks: this.scheduledTasks,
       _lastProcessedSeq: this._lastProcessedSeq,
     };
     return JSON.stringify(obj);
@@ -1441,6 +1490,15 @@ export class SessionStore {
       this.taskNotifications = new Map(
         (obj.taskNotifications ?? []) as Array<[string, TaskNotificationItem]>,
       );
+      this.scheduledTasks = Array.isArray(obj.scheduledTasks)
+        ? (obj.scheduledTasks as unknown[]).filter(
+            (t): t is ScheduledTask =>
+              !!t &&
+              typeof t === "object" &&
+              typeof (t as Record<string, unknown>).id === "string" &&
+              typeof (t as Record<string, unknown>).humanSchedule === "string",
+          )
+        : [];
       this._lastProcessedSeq = (obj._lastProcessedSeq as number) ?? 0;
 
       // Rebuild runtime tool indexes from restored state
@@ -2760,6 +2818,12 @@ export class SessionStore {
         this._clearTimeoutError();
         if (getSeenTool().has(ev.tool_use_id)) break;
         getSeenTool().add(ev.tool_use_id);
+        // Stash input so tool_end branches can join by tool_use_id.
+        // Batch path uses ctx map; live path falls back to timeline lookup
+        // in `_lookupToolStartInput` (entry written by _pushTimeline below).
+        if (ctx && ev.input && typeof ev.input === "object") {
+          ctx.toolInputByUseId.set(ev.tool_use_id, ev.input as Record<string, unknown>);
+        }
         // Subagent routing: nest inside parent tool's subTimeline
         if (ev.parent_tool_use_id) {
           const parentIdx = this._findParentToolIdx(ctx, ev.parent_tool_use_id);
@@ -2875,6 +2939,72 @@ export class SessionStore {
             const u = [...this.timeline];
             u[tIdx] = updated;
             this.timeline = u;
+          }
+        }
+
+        // Scheduled-task tracking: CronCreate / CronDelete maintain scheduledTasks state.
+        // Writes go through ctx.scheduledTasks (batch path) or this.scheduledTasks
+        // (live applyEvent path with ctx=null) to keep async-replay stale-safety.
+        // CronList is intentionally not consumed — output shape is unverified upstream.
+        if (resolvedStatus === "success") {
+          const readTasks = (): ScheduledTask[] => (ctx ? ctx.scheduledTasks : this.scheduledTasks);
+          const writeTasks = (next: ScheduledTask[]): void => {
+            if (ctx) ctx.scheduledTasks = next;
+            else this.scheduledTasks = next;
+          };
+
+          if (ev.tool_name === "CronCreate") {
+            const result = ev.tool_use_result as Record<string, unknown> | undefined;
+            const id = typeof result?.id === "string" ? result.id : null;
+            if (id && result) {
+              const startInput = this._lookupToolStartInput(ctx, ev.tool_use_id);
+              const humanSchedule =
+                typeof result.humanSchedule === "string" ? result.humanSchedule : "";
+              const task: ScheduledTask = {
+                id,
+                humanSchedule,
+                recurring: result.recurring === true,
+                durable: result.durable === true,
+                prompt: typeof startInput?.prompt === "string" ? startInput.prompt : undefined,
+                cron:
+                  typeof startInput?.cron === "string"
+                    ? startInput.cron
+                    : typeof startInput?.schedule === "string"
+                      ? (startInput.schedule as string)
+                      : typeof startInput?.expression === "string"
+                        ? (startInput.expression as string)
+                        : undefined,
+                toolUseId: ev.tool_use_id,
+              };
+              // Replace-by-id: if CLI re-emits the same id (e.g. snapshot + live
+              // overlap, or replay with newer input), keep the latest payload
+              // rather than skipping. Preserves order.
+              const cur = readTasks();
+              const idx = cur.findIndex((t) => t.id === id);
+              if (idx >= 0) {
+                const next = [...cur];
+                next[idx] = task;
+                writeTasks(next);
+              } else {
+                writeTasks([...cur, task]);
+              }
+            } else {
+              dbgWarn("store", "CronCreate tool_end missing id", { result });
+            }
+          } else if (ev.tool_name === "CronDelete") {
+            const result = ev.tool_use_result as Record<string, unknown> | undefined;
+            const startInput = this._lookupToolStartInput(ctx, ev.tool_use_id);
+            const id =
+              (typeof result?.id === "string" && result.id) ||
+              (typeof startInput?.id === "string" && (startInput.id as string)) ||
+              (typeof startInput?.task_id === "string" && (startInput.task_id as string)) ||
+              (typeof startInput?.cronId === "string" && (startInput.cronId as string)) ||
+              null;
+            if (id) {
+              writeTasks(readTasks().filter((t) => t.id !== id));
+            } else {
+              dbgWarn("store", "CronDelete tool_end could not resolve id", { result, startInput });
+            }
           }
         }
 

@@ -1505,5 +1505,16 @@
   "export_noConversation": "没有可导出的对话",
   "export_htmlSuccess": "已导出 HTML",
   "export_htmlFailed": "导出失败",
-  "export_htmlButton": "导出为 HTML"
+  "export_htmlButton": "导出为 HTML",
+
+  "scheduled_tasks_count": "{count} 个定时任务",
+  "scheduled_tasks_listButton": "请 Claude 列出",
+  "scheduled_tasks_listTooltip": "请 Claude 列出当前定时任务",
+  "scheduled_tasks_cancelButton": "请 Claude 取消",
+  "scheduled_tasks_cancelTooltip": "请 Claude 取消该任务",
+  "scheduled_tasks_cancelPending": "正在取消…",
+  "scheduled_tasks_cancelTimeout": "仍未取消，请重试",
+  "scheduled_tasks_waitForTurn": "等待当前回合结束",
+  "scheduled_tasks_oneShot": "单次",
+  "scheduled_tasks_expiryNote": "任务 7 天后由 CLI 自动过期"
 }

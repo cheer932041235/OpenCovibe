@@ -55,6 +55,7 @@ import subagentTaskEvents from "./__fixtures__/subagent-task.json";
 import protocolEvents from "./__fixtures__/protocol-events.json";
 import teamSessionEvents from "./__fixtures__/team-session.json";
 import ralphLoopEvents from "./__fixtures__/ralph-loop.json";
+import scheduledTasksEvents from "./__fixtures__/scheduled-tasks.json";
 import malformedEvents from "./__fixtures__/malformed-events.json";
 
 // Import store and mocked modules after mocks
@@ -2087,6 +2088,215 @@ describe("SessionStore reducer", () => {
     });
   });
 
+  describe("scheduled tasks (CronCreate/CronDelete reducer)", () => {
+    function makeCronEvents(): BusEvent[] {
+      return [
+        {
+          type: "tool_start",
+          run_id: "run-cron",
+          tool_use_id: "tool-cc-1",
+          tool_name: "CronCreate",
+          input: { cron: "*/5 * * * *", prompt: "echo test", recurring: true },
+        } as BusEvent,
+        {
+          type: "tool_end",
+          run_id: "run-cron",
+          tool_use_id: "tool-cc-1",
+          tool_name: "CronCreate",
+          output: { success: true },
+          status: "success",
+          duration_ms: 12,
+          tool_use_result: {
+            id: "abc12345",
+            humanSchedule: "every 5 minutes",
+            recurring: true,
+            durable: false,
+          },
+        } as BusEvent,
+      ];
+    }
+
+    it("CronCreate success populates every ScheduledTask field via start↔end join", () => {
+      store.run = makeRun("run-cron");
+      store.phase = "running";
+      store.applyEventBatch(makeCronEvents());
+      expect(store.scheduledTasks).toHaveLength(1);
+      const t = store.scheduledTasks[0];
+      expect(t.id).toBe("abc12345");
+      expect(t.humanSchedule).toBe("every 5 minutes");
+      expect(t.recurring).toBe(true);
+      expect(t.durable).toBe(false);
+      expect(t.prompt).toBe("echo test");
+      expect(t.cron).toBe("*/5 * * * *");
+      expect(t.toolUseId).toBe("tool-cc-1");
+    });
+
+    it("re-emitted CronCreate with same id replaces existing task (latest input wins)", () => {
+      store.run = makeRun("run-cron");
+      store.phase = "running";
+      // First create: prompt "echo test"
+      store.applyEventBatch(makeCronEvents());
+      expect(store.scheduledTasks).toHaveLength(1);
+      expect(store.scheduledTasks[0].prompt).toBe("echo test");
+      // Re-emit same id with different prompt (covers snapshot+live overlap)
+      store.applyEventBatch([
+        {
+          type: "tool_start",
+          run_id: "run-cron",
+          tool_use_id: "tool-cc-2",
+          tool_name: "CronCreate",
+          input: { cron: "*/10 * * * *", prompt: "echo updated", recurring: true },
+        } as BusEvent,
+        {
+          type: "tool_end",
+          run_id: "run-cron",
+          tool_use_id: "tool-cc-2",
+          tool_name: "CronCreate",
+          output: { success: true },
+          status: "success",
+          duration_ms: 12,
+          tool_use_result: {
+            id: "abc12345",
+            humanSchedule: "every 10 minutes",
+            recurring: true,
+            durable: false,
+          },
+        } as BusEvent,
+      ]);
+      // Still one task — replaced, not appended
+      expect(store.scheduledTasks).toHaveLength(1);
+      expect(store.scheduledTasks[0].prompt).toBe("echo updated");
+      expect(store.scheduledTasks[0].cron).toBe("*/10 * * * *");
+      expect(store.scheduledTasks[0].humanSchedule).toBe("every 10 minutes");
+    });
+
+    it("live applyEvent path (ctx=null) joins start↔end via timeline lookup", () => {
+      // Live WebSocket path delivers events one-by-one via applyEvent (ctx=null).
+      // CronCreate at tool_end must still find tool_start.input through the timeline,
+      // not just the batch-local toolInputByUseId map.
+      store.run = makeRun("run-cron");
+      store.phase = "running";
+      const [start, end] = makeCronEvents();
+      store.applyEvent(start);
+      store.applyEvent(end);
+      expect(store.scheduledTasks).toHaveLength(1);
+      const t = store.scheduledTasks[0];
+      expect(t.prompt).toBe("echo test");
+      expect(t.cron).toBe("*/5 * * * *");
+      expect(t.id).toBe("abc12345");
+    });
+
+    it("lifecycle 0 → 1 → 0 across full fixture replay", () => {
+      store.run = makeRun("run-cron");
+      store.phase = "running";
+      const events = scheduledTasksEvents as BusEvent[];
+      // Replay through CronCreate tool_end (index 5)
+      store.applyEventBatch(events.slice(0, 6));
+      expect(store.scheduledTasks).toHaveLength(1);
+      // Replay through end of fixture (includes CronDelete tool_end)
+      store.applyEventBatch(events.slice(6));
+      expect(store.scheduledTasks).toHaveLength(0);
+    });
+
+    it("CronDelete prefers tool_use_result.id over input fallback", () => {
+      store.run = makeRun("run-cron");
+      store.phase = "running";
+      store.applyEventBatch(makeCronEvents());
+      expect(store.scheduledTasks).toHaveLength(1);
+      store.applyEventBatch([
+        {
+          type: "tool_start",
+          run_id: "run-cron",
+          tool_use_id: "tool-cd-1",
+          tool_name: "CronDelete",
+          // intentionally wrong/missing input id — must fall through to tool_use_result.id
+          input: {},
+        } as BusEvent,
+        {
+          type: "tool_end",
+          run_id: "run-cron",
+          tool_use_id: "tool-cd-1",
+          tool_name: "CronDelete",
+          output: { success: true },
+          status: "success",
+          duration_ms: 4,
+          tool_use_result: { id: "abc12345" },
+        } as BusEvent,
+      ]);
+      expect(store.scheduledTasks).toHaveLength(0);
+    });
+
+    it("CronDelete falls back to input.id when tool_use_result lacks id", () => {
+      store.run = makeRun("run-cron");
+      store.phase = "running";
+      store.applyEventBatch(makeCronEvents());
+      store.applyEventBatch([
+        {
+          type: "tool_start",
+          run_id: "run-cron",
+          tool_use_id: "tool-cd-2",
+          tool_name: "CronDelete",
+          input: { id: "abc12345" },
+        } as BusEvent,
+        {
+          type: "tool_end",
+          run_id: "run-cron",
+          tool_use_id: "tool-cd-2",
+          tool_name: "CronDelete",
+          output: { success: true },
+          status: "success",
+          duration_ms: 4,
+          tool_use_result: {},
+        } as BusEvent,
+      ]);
+      expect(store.scheduledTasks).toHaveLength(0);
+    });
+
+    it("CronList does NOT mutate scheduledTasks (unverified shape)", () => {
+      store.run = makeRun("run-cron");
+      store.phase = "running";
+      store.applyEventBatch(makeCronEvents());
+      const before = [...store.scheduledTasks];
+      store.applyEventBatch([
+        {
+          type: "tool_start",
+          run_id: "run-cron",
+          tool_use_id: "tool-cl-1",
+          tool_name: "CronList",
+          input: {},
+        } as BusEvent,
+        {
+          type: "tool_end",
+          run_id: "run-cron",
+          tool_use_id: "tool-cl-1",
+          tool_name: "CronList",
+          output: { success: true },
+          status: "success",
+          duration_ms: 1,
+          tool_use_result: { tasks: [] },
+        } as BusEvent,
+      ]);
+      // Unchanged — we don't trust CronList shape yet
+      expect(store.scheduledTasks).toEqual(before);
+    });
+
+    it("snapshot round-trip preserves scheduledTasks", () => {
+      store.run = makeRun("run-cron");
+      store.phase = "running";
+      store.applyEventBatch(makeCronEvents());
+      // Use private methods via cast to test snapshot machinery
+      const snapBody = (store as unknown as { _buildSnapshot(): string })._buildSnapshot();
+      const fresh = new SessionStore();
+      fresh.run = makeRun("run-cron");
+      const ok = (fresh as unknown as { _tryApplySnapshot(s: string): boolean })._tryApplySnapshot(
+        snapBody,
+      );
+      expect(ok).toBe(true);
+      expect(fresh.scheduledTasks).toHaveLength(1);
+      expect(fresh.scheduledTasks[0]).toEqual(store.scheduledTasks[0]);
+    });
+  });
+
   describe("elicitation_prompt", () => {
     it("adds to pendingElicitations map keyed by request_id", () => {
       store.run = makeRun("run-1");
@@ -3783,6 +3993,7 @@ describe("SessionStore reducer", () => {
       { name: "team-session", runId: "run-1", events: teamSessionEvents },
       { name: "protocol-events", runId: "run-1", events: protocolEvents },
       { name: "ralph-loop", runId: "run-ralph-1", events: ralphLoopEvents },
+      { name: "scheduled-tasks", runId: "run-cron", events: scheduledTasksEvents },
     ];
 
     for (const { name, runId, events } of strictFixtures) {

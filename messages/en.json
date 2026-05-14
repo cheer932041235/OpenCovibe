@@ -1505,5 +1505,16 @@
   "export_noConversation": "No conversation to export",
   "export_htmlSuccess": "Exported HTML",
   "export_htmlFailed": "Export failed",
-  "export_htmlButton": "Export as HTML"
+  "export_htmlButton": "Export as HTML",
+
+  "scheduled_tasks_count": "{count} scheduled",
+  "scheduled_tasks_listButton": "Ask Claude to list",
+  "scheduled_tasks_listTooltip": "Ask Claude to list scheduled tasks",
+  "scheduled_tasks_cancelButton": "Ask Claude to cancel",
+  "scheduled_tasks_cancelTooltip": "Ask Claude to cancel this task",
+  "scheduled_tasks_cancelPending": "Cancellation in progress…",
+  "scheduled_tasks_cancelTimeout": "Still active — try again",
+  "scheduled_tasks_waitForTurn": "Wait for current turn",
+  "scheduled_tasks_oneShot": "Once",
+  "scheduled_tasks_expiryNote": "Tasks expire after 7 days (CLI managed)"
 }
