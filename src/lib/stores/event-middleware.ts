@@ -41,6 +41,7 @@ export class EventMiddleware {
   private _BATCH_INTERVAL = 16; // ~1 frame
   private _MAX_BUFFER_SIZE = 500; // per-run overflow threshold
   private _lastFlushTime = 0; // track last flush for idle detection
+  private _IDLE_GAP_MS = 100; // gap above which the next token starts a fresh burst
 
   // Idempotent start guard
   private _started = false;
@@ -311,9 +312,9 @@ export class EventMiddleware {
     const now = performance.now();
     const idleGap = now - this._lastFlushTime;
 
-    // If idle for >100ms, this is the first token of a new burst — flush
+    // If idle for >_IDLE_GAP_MS, this is the first token of a new burst — flush
     // immediately via microtask so the user sees output without a ~16ms gap.
-    if (idleGap > 100) {
+    if (idleGap > this._IDLE_GAP_MS) {
       queueMicrotask(() => this._flush());
     } else if (typeof requestAnimationFrame !== "undefined") {
       requestAnimationFrame(() => this._flush());
